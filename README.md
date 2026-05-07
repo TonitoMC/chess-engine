@@ -5,7 +5,7 @@ A performance-oriented chess engine written in Rust, built on top of [Reckless](
 ## Project Variants (branch-organized)
 The repository is structured by branch to measure elo progression across different logic stacks:
 
-* [cite_start]**`v1-base`**: baseline alpha-beta search with simple material/pst evaluation.
+* **`v1-base`**: baseline alpha-beta search with simple material/pst evaluation.
 
 ## License
 This project is licensed under the **GNU AFFERO GENERAL PUBLIC LICENSE v3.0**. It incorporates code from the [Reckless Engine](https://github.com/codedeliveryservice/Reckless).
