@@ -6,7 +6,6 @@ use std::sync::{
 use crate::{
     board::Board,
     history::{ContinuationCorrectionHistory, ContinuationHistory, CorrectionHistory, NoisyHistory, QuietHistory},
-    nnue::{Network, ParametersHandle},
     numa::{NumaConfig, NumaReplicable, NumaReplicated, NumaReplicatedAccessToken, NumaReplicationContext},
     stack::Stack,
     threadpool::ThreadPool,
@@ -108,7 +107,6 @@ pub struct SharedContext {
     pub soft_stop_votes: AtomicUsize,
     pub best_stats: [AtomicU32; MAX_MOVES],
     pub history: Arc<NumaReplicated<SharedCorrectionHistory>>,
-    pub parameters: Arc<NumaReplicated<ParametersHandle>>,
     pub numa_context: Arc<NumaReplicationContext>,
 }
 
@@ -126,7 +124,6 @@ impl Default for SharedContext {
             soft_stop_votes: AtomicUsize::new(0),
             best_stats: [const { AtomicU32::new(0) }; MAX_MOVES],
             history: NumaReplicated::new(numa_context.clone()),
-            parameters: NumaReplicated::new(numa_context.clone()),
             numa_context,
         }
     }
@@ -139,7 +136,6 @@ pub struct ThreadData {
     pub board: Board,
     pub time_manager: TimeManager,
     pub stack: Box<Stack>,
-    pub nnue: Network,
     pub root_moves: Vec<RootMove>,
     pub pv_table: PrincipalVariationTable,
     pub noisy_history: NoisyHistory,
@@ -147,7 +143,6 @@ pub struct ThreadData {
     pub continuation_history: ContinuationHistory,
     pub continuation_corrhist: ContinuationCorrectionHistory,
     pub best_move_changes: usize,
-    pub optimism: [i32; 2],
     pub root_depth: i32,
     pub root_delta: i32,
     pub sel_depth: i32,
@@ -163,7 +158,6 @@ pub struct ThreadData {
 impl ThreadData {
     pub fn new(shared: Arc<SharedContext>, numa_token: NumaReplicatedAccessToken) -> Self {
         let corrhist = shared.history.get(numa_token);
-        let parameters = shared.parameters.get(numa_token);
 
         Self {
             id: 0,
@@ -172,7 +166,6 @@ impl ThreadData {
             board: Board::starting_position(),
             time_manager: TimeManager::new(Limits::Infinite, 0, 0),
             stack: Stack::new(),
-            nnue: Network::new(parameters),
             root_moves: Vec::new(),
             pv_table: PrincipalVariationTable::default(),
             noisy_history: NoisyHistory::default(),
@@ -180,7 +173,6 @@ impl ThreadData {
             continuation_history: ContinuationHistory::default(),
             continuation_corrhist: ContinuationCorrectionHistory::default(),
             best_move_changes: 0,
-            optimism: [0; 2],
             root_depth: 0,
             root_delta: 0,
             sel_depth: 0,

@@ -4,13 +4,14 @@ use std::sync::Arc;
 
 use crate::{
     board::{Board, NullBoardObserver},
+    evaluation::evaluate,
     search::Report,
     thread::{SharedContext, Status, ThreadData},
     threadpool::ThreadPool,
     time::{Limits, TimeManager},
     tools,
     transposition::DEFAULT_TT_SIZE,
-    types::{Color, MAX_MOVES, Move, Piece, Score, Square, is_decisive, is_loss, is_win},
+    types::{Color, MAX_MOVES, Move, Score, is_decisive, is_loss, is_win},
 };
 
 #[derive(Copy, Clone, PartialEq, Eq)]
@@ -321,62 +322,11 @@ fn set_option(threads: &mut ThreadPool, settings: &mut Settings, shared: &Arc<Sh
     }
 }
 
-fn eval(td: &mut ThreadData, board: &Board) {
-    td.nnue.full_refresh(board);
-    td.nnue.evaluate(board);
-
+fn eval(_td: &mut ThreadData, board: &Board) {
+    let score = evaluate(board);
     let side = board.side_to_move();
-
-    println!("NNUE derived piece values");
-    println!("+-------+-------+-------+-------+-------+-------+-------+-------+");
-    for rank in (0..8).rev() {
-        print!("|");
-        for file in 0..8 {
-            let sq = Square::from_rank_file(rank, file);
-            let piece = board.piece_on(sq);
-            let piece_str = if piece == Piece::None { " ".to_string() } else { piece.to_string() };
-            print!("  {:^3}  |", piece_str);
-        }
-        println!();
-
-        print!("|");
-        for file in 0..8 {
-            let sq = Square::from_rank_file(rank, file);
-            match td.nnue.piece_contribution(board, sq) {
-                None => print!("       |"),
-                Some(v) => {
-                    let val = v as f32 / 100.0;
-                    print!("{:+6.2} |", val);
-                }
-            }
-        }
-        println!();
-        println!("+-------+-------+-------+-------+-------+-------+-------+-------+");
-    }
-
-    let used_bucket = crate::nnue::OUTPUT_BUCKETS_LAYOUT[board.occupancies().popcount()];
-
-    println!("\nNNUE output buckets (White side)");
-    println!("+------------+------------+");
-    println!("|   Bucket   |   Total    |");
-    println!("+------------+------------+");
-
-    for bucket in 0..8 {
-        let raw_score = td.nnue.eval_with_bucket(board, bucket);
-        let white_score = if side == Color::White { raw_score } else { -raw_score };
-        let total = white_score as f32 / 100.0;
-
-        if bucket == used_bucket {
-            println!("|  {:<2}        | {:+7.2}    | <-- this bucket is used", bucket, total);
-        } else {
-            println!("|  {:<2}        | {:+7.2}    |", bucket, total);
-        }
-    }
-    println!("+------------+------------+");
-
-    let final_eval = td.nnue.evaluate(board);
-    let final_total = (if side == Color::White { final_eval } else { -final_eval }) as f32 / 100.0;
-    println!("\nNNUE evaluation        {:+.2} (White side)", final_total);
+    let white_score = if side == Color::White { score } else { -score };
+    println!("Evaluation: {:+.2} (White side)", white_score as f32 / 100.0);
 }
 
 fn parse_limits(color: Color, tokens: &[&str]) -> Limits {
