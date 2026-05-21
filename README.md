@@ -17,7 +17,6 @@ This is the baseline version. The original NNUE neural network evaluation from R
 - **Alpha-beta (negamax)** — prunes branches that cannot affect the result
 - **Quiescence search** — extends captures at leaf nodes to avoid the horizon effect
 - **Transposition table** — caches results by Zobrist hash to avoid re-searching transposed positions
-- **Move ordering** — TT move first, then captures (MVV-LVA), then quiet moves (history heuristic)
 
 ### Tooling
 
@@ -35,8 +34,8 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 
 ## Project Variants (branch-organized)
 
-| Branch | Description |
-|---|---|
+| Branch    | Description                                         |
+| --------- | --------------------------------------------------- |
 | `v1-base` | Baseline: HCE (material + PSTs) + alpha-beta search |
 
 ## License
