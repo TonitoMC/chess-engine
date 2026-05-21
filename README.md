@@ -2,6 +2,16 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
+## Branch: `v2.3-rfp`
+
+Builds on `v2.2-lmr`. Adds Reverse Futility Pruning.
+
+### Search additions
+
+- **Reverse Futility Pruning (RFP)** — in non-PV nodes where depth <= 8 and static eval beats beta by a margin of `75 * depth`, return the eval early. The intuition is that if we're already this far above beta, any move we make is unlikely to drop below it.
+
+---
+
 ## Branch: `v2.2-lmr`
 
 Builds on `v2.1-nmp`. Adds Late Move Reductions.
@@ -64,6 +74,7 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 | `v2-tapered-eval`    | PeSTO tapered eval (MG/EG PSTs) + full move ordering             |
 | `v2.1-nmp`           | Adds Null Move Pruning                                            |
 | `v2.2-lmr`           | Adds Late Move Reductions                                         |
+| `v2.3-rfp`           | Adds Reverse Futility Pruning                                     |
 
 ## License
 

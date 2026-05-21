@@ -188,6 +188,16 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
 
     let eval = td.stack[ply].eval;
 
+    // Reverse Futility Pruning: if static eval beats beta by a large enough
+    // margin, we're unlikely to fall below beta after any move, so prune.
+    if !NODE::PV
+        && !td.board.in_check()
+        && depth <= 8
+        && eval - 75 * depth >= beta
+    {
+        return eval;
+    }
+
     // Null Move Pruning: give the opponent a free move. If they still can't beat
     // beta, our position is good enough to prune without searching further.
     if !NODE::PV
