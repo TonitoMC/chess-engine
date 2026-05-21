@@ -2,14 +2,16 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
-## Branch: `v1.5-move-ordering`
+## Branch: `v2-tapered-eval`
 
-This is the baseline version. The original NNUE neural network evaluation from Reckless was stripped out and replaced with a classical hand-crafted evaluation (HCE), and the search was simplified to a clean alpha-beta implementation.
+Builds on `v1.5-move-ordering`. Replaces the single-phase Michniewski PSTs with PeSTO's tuned middlegame/endgame tables, interpolated by remaining material so the engine transitions smoothly into endgame play.
 
 ### Evaluation
 
-- **Material** — fixed centipawn values per piece type (pawn 100, knight 320, bishop 330, rook 500, queen 900)
-- **Piece-square tables** — positional bonuses/penalties per square based on Tomasz Michniewski's Simplified Evaluation Function
+- **Material** — separate middlegame and endgame centipawn values per piece type (Rofchade-tuned)
+- **Piece-square tables** — PeSTO's tuned MG/EG PSTs, interpolated by game phase
+- **Tapered eval** — game phase computed from remaining material (max 24: queens×4, rooks×2, minors×1); score is a weighted blend of MG and EG scores
+- **Insufficient material detection** — recognizes theoretical draws (KvK, KBvK, KNvK, same-colored bishops)
 
 ### Search
 
@@ -17,7 +19,7 @@ This is the baseline version. The original NNUE neural network evaluation from R
 - **Alpha-beta (negamax)** — prunes branches that cannot affect the result
 - **Quiescence search** — extends captures at leaf nodes to avoid the horizon effect
 - **Transposition table** — caches results by Zobrist hash to avoid re-searching transposed positions
-- (New) **Move ordering** — TT move first, then captures (MVV-LVA), then quiet moves (history heuristic)
+- **Move ordering** — TT move first, then captures (SEE-filtered), then quiet moves (history heuristic)
 
 ### Tooling
 
@@ -35,9 +37,11 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 
 ## Project Variants (branch-organized)
 
-| Branch    | Description                                         |
-| --------- | --------------------------------------------------- |
-| `v1-base` | Baseline: HCE (material + PSTs) + alpha-beta search |
+| Branch             | Description                                                       |
+| ------------------ | ----------------------------------------------------------------- |
+| `v1-base`          | Baseline: HCE (Michniewski PSTs) + alpha-beta, no move ordering  |
+| `v1.5-move-ordering` | Same eval, adds staged move ordering with history heuristics    |
+| `v2-tapered-eval`  | PeSTO tapered eval (MG/EG PSTs) + full move ordering             |
 
 ## License
 
