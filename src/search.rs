@@ -223,12 +223,31 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         td.stack[ply].move_count = move_count;
 
         let initial_nodes = td.nodes();
+        let is_quiet = !mv.is_noisy();
         make_move(td, ply, mv);
 
         let score = if NODE::PV && move_count == 1 {
             -search::<PV>(td, -beta, -alpha, depth - 1, ply + 1)
         } else {
-            let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1, ply + 1);
+            // Late Move Reductions: moves tried late are likely bad, so search
+            // them at reduced depth. If the reduced search beats alpha anyway,
+            // re-search at full depth to confirm.
+            let reduction = if depth >= 3 && move_count > 3 && is_quiet {
+                let r = (depth as f32).ln() * (move_count as f32).ln() / 2.0;
+                (r as i32).clamp(1, depth - 1)
+            } else {
+                0
+            };
+
+            let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1);
+
+            // Re-search at full depth if the reduced search beat alpha
+            let s = if s > alpha && reduction > 0 {
+                -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1, ply + 1)
+            } else {
+                s
+            };
+
             if s > alpha && NODE::PV {
                 -search::<PV>(td, -beta, -alpha, depth - 1, ply + 1)
             } else {

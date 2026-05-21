@@ -2,6 +2,16 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
+## Branch: `v2.2-lmr`
+
+Builds on `v2.1-nmp`. Adds Late Move Reductions.
+
+### Search additions
+
+- **Late Move Reductions (LMR)** — quiet moves tried after the first 3 are searched at reduced depth `R = ln(depth) * ln(move_count) / 2`. If the reduced search still beats alpha, re-search at full depth to confirm. Not applied on the first move, captures, or when depth < 3.
+
+---
+
 ## Branch: `v2.1-nmp`
 
 Builds on `v2-tapered-eval`. Adds Null Move Pruning to the search.
@@ -53,6 +63,7 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 | `v1.5-move-ordering` | Same eval, adds staged move ordering with history heuristics      |
 | `v2-tapered-eval`    | PeSTO tapered eval (MG/EG PSTs) + full move ordering             |
 | `v2.1-nmp`           | Adds Null Move Pruning                                            |
+| `v2.2-lmr`           | Adds Late Move Reductions                                         |
 
 ## License
 
