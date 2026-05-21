@@ -217,10 +217,33 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         }
     }
 
+    // Singular Extensions: if the TT move looks way better than all alternatives,
+    // extend its search by 1 ply. We verify this by searching all other moves at
+    // reduced depth with a window just below the TT score. If nothing beats it, extend.
+    let singular_extension = if !NODE::ROOT
+        && depth >= 6
+        && tt_move.is_present()
+        && tt_bound != Bound::Upper
+        && is_valid(tt_score)
+        && entry.as_ref().map_or(0, |e| e.depth) >= depth - 3
+        && td.stack[ply].excluded.is_null()
+    {
+        let s_beta = tt_score - depth * 2;
+        td.stack[ply].excluded = tt_move;
+        let s_score = search::<NonPV>(td, s_beta - 1, s_beta, depth / 2, ply);
+        td.stack[ply].excluded = Move::NULL;
+        s_score < s_beta
+    } else {
+        false
+    };
+
     let mut best_score = -Score::INFINITE;
     let mut best_move = Move::NULL;
     let mut bound = Bound::Upper;
     let mut move_count = 0;
+
+    // LMP thresholds: after trying this many quiet moves at low depth, skip the rest
+    let lmp_threshold = [0, 8, 12, 16, 20];
 
     let mut move_picker = MovePicker::new(tt_move);
 
@@ -229,15 +252,32 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
             continue;
         }
 
+        // Skip the excluded move during singular search
+        if mv == td.stack[ply].excluded {
+            continue;
+        }
+
         move_count += 1;
         td.stack[ply].move_count = move_count;
 
         let initial_nodes = td.nodes();
         let is_quiet = !mv.is_noisy();
+
+        // Late Move Pruning: at low depths, skip quiet moves beyond the threshold
+        if !NODE::PV
+            && is_quiet
+            && depth <= 4
+            && move_count > lmp_threshold[depth as usize]
+        {
+            continue;
+        }
+
+        let extension = if mv == tt_move && singular_extension { 1 } else { 0 };
+
         make_move(td, ply, mv);
 
         let score = if NODE::PV && move_count == 1 {
-            -search::<PV>(td, -beta, -alpha, depth - 1, ply + 1)
+            -search::<PV>(td, -beta, -alpha, depth - 1 + extension, ply + 1)
         } else {
             // Late Move Reductions: moves tried late are likely bad, so search
             // them at reduced depth. If the reduced search beats alpha anyway,
@@ -249,17 +289,17 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
                 0
             };
 
-            let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 - reduction, ply + 1);
+            let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension - reduction, ply + 1);
 
             // Re-search at full depth if the reduced search beat alpha
             let s = if s > alpha && reduction > 0 {
-                -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1, ply + 1)
+                -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension, ply + 1)
             } else {
                 s
             };
 
             if s > alpha && NODE::PV {
-                -search::<PV>(td, -beta, -alpha, depth - 1, ply + 1)
+                -search::<PV>(td, -beta, -alpha, depth - 1 + extension, ply + 1)
             } else {
                 s
             }

@@ -2,6 +2,17 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
+## Branch: `v2.4-additional-heuristics`
+
+Builds on `v2.3-rfp`. Adds Late Move Pruning and Singular Extensions.
+
+### Search additions
+
+- **Late Move Pruning (LMP)** — at depth <= 4, if we've already tried enough quiet moves (threshold scales with depth: 8/12/16/20), skip the rest entirely rather than reducing. More aggressive than LMR for shallow nodes.
+- **Singular Extensions** — before the move loop, if the TT move has sufficient depth and is a lower bound, search all *other* moves at reduced depth with a window just below the TT score. If nothing beats it, the TT move is "singular" — extend its search by 1 ply. Helps find tactics at the search horizon.
+
+---
+
 ## Branch: `v2.3-rfp`
 
 Builds on `v2.2-lmr`. Adds Reverse Futility Pruning.
@@ -75,6 +86,7 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 | `v2.1-nmp`           | Adds Null Move Pruning                                            |
 | `v2.2-lmr`           | Adds Late Move Reductions                                         |
 | `v2.3-rfp`           | Adds Reverse Futility Pruning                                     |
+| `v2.4-additional-heuristics` | Adds Late Move Pruning + Singular Extensions            |
 
 ## License
 
