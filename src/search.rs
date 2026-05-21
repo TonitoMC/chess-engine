@@ -186,6 +186,27 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
     td.stack[ply].move_count = 0;
     td.stack[ply + 2].cutoff_count = 0;
 
+    let eval = td.stack[ply].eval;
+
+    // Null Move Pruning: give the opponent a free move. If they still can't beat
+    // beta, our position is good enough to prune without searching further.
+    if !NODE::PV
+        && !td.board.in_check()
+        && depth >= 3
+        && eval >= beta
+        && td.board.plies_from_null() > 0
+        && td.board.has_non_pawn_material(td.board.side_to_move())
+    {
+        let reduction = 3 + depth / 3;
+        td.board.make_null_move();
+        let null_score = -search::<NonPV>(td, -beta, -beta + 1, depth - reduction, ply + 1);
+        td.board.undo_null_move();
+
+        if null_score >= beta {
+            return beta;
+        }
+    }
+
     let mut best_score = -Score::INFINITE;
     let mut best_move = Move::NULL;
     let mut bound = Bound::Upper;

@@ -2,6 +2,16 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
+## Branch: `v2.1-nmp`
+
+Builds on `v2-tapered-eval`. Adds Null Move Pruning to the search.
+
+### Search additions
+
+- **Null Move Pruning (NMP)** — in non-PV nodes where static eval >= beta and the side to move has non-pawn material (avoiding zugzwang), make a null move and search at reduced depth (R = 3 + depth/3). If the reduced search still beats beta, prune the node. Disabled in check and when the previous move was also a null move.
+
+---
+
 ## Branch: `v2-tapered-eval`
 
 Builds on `v1.5-move-ordering`. Replaces the single-phase Michniewski PSTs with PeSTO's tuned middlegame/endgame tables, interpolated by remaining material so the engine transitions smoothly into endgame play.
@@ -37,11 +47,12 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 
 ## Project Variants (branch-organized)
 
-| Branch             | Description                                                       |
-| ------------------ | ----------------------------------------------------------------- |
-| `v1-base`          | Baseline: HCE (Michniewski PSTs) + alpha-beta, no move ordering  |
-| `v1.5-move-ordering` | Same eval, adds staged move ordering with history heuristics    |
-| `v2-tapered-eval`  | PeSTO tapered eval (MG/EG PSTs) + full move ordering             |
+| Branch               | Description                                                       |
+| -------------------- | ----------------------------------------------------------------- |
+| `v1-base`            | Baseline: HCE (Michniewski PSTs) + alpha-beta, no move ordering  |
+| `v1.5-move-ordering` | Same eval, adds staged move ordering with history heuristics      |
+| `v2-tapered-eval`    | PeSTO tapered eval (MG/EG PSTs) + full move ordering             |
+| `v2.1-nmp`           | Adds Null Move Pruning                                            |
 
 ## License
 

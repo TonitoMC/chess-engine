@@ -148,6 +148,18 @@ impl Board {
         self.state.material
     }
 
+    pub const fn plies_from_null(&self) -> usize {
+        self.state.plies_from_null
+    }
+
+    pub fn has_non_pawn_material(&self, color: Color) -> bool {
+        let non_pawn = self.colored_pieces(color, PieceType::Knight)
+            | self.colored_pieces(color, PieceType::Bishop)
+            | self.colored_pieces(color, PieceType::Rook)
+            | self.colored_pieces(color, PieceType::Queen);
+        !non_pawn.is_empty()
+    }
+
     pub const fn in_check(&self) -> bool {
         !self.state.checkers.is_empty()
     }
