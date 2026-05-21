@@ -2,7 +2,7 @@
 
 A chess engine written in Rust, built on top of [Reckless](https://github.com/codedeliveryservice/Reckless) as a base for board representation, move generation, UCI handling, and threading. The project serves as an experimental testbed for comparing different search algorithms and evaluation functions, with each version tracked on its own branch.
 
-## Branch: `v1-base`
+## Branch: `v1.5-move-ordering`
 
 This is the baseline version. The original NNUE neural network evaluation from Reckless was stripped out and replaced with a classical hand-crafted evaluation (HCE), and the search was simplified to a clean alpha-beta implementation.
 
@@ -17,7 +17,7 @@ This is the baseline version. The original NNUE neural network evaluation from R
 - **Alpha-beta (negamax)** — prunes branches that cannot affect the result
 - **Quiescence search** — extends captures at leaf nodes to avoid the horizon effect
 - **Transposition table** — caches results by Zobrist hash to avoid re-searching transposed positions
-- **Move ordering** — TT move first, then captures (MVV-LVA), then quiet moves (history heuristic)
+- (New) **Move ordering** — TT move first, then captures (MVV-LVA), then quiet moves (history heuristic)
 
 ### Tooling
 
@@ -35,8 +35,8 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 
 ## Project Variants (branch-organized)
 
-| Branch | Description |
-|---|---|
+| Branch    | Description                                         |
+| --------- | --------------------------------------------------- |
 | `v1-base` | Baseline: HCE (material + PSTs) + alpha-beta search |
 
 ## License
