@@ -8,7 +8,6 @@ mod evaluation;
 mod history;
 mod lookup;
 mod misc;
-mod movepick;
 mod numa;
 mod parameters;
 mod search;

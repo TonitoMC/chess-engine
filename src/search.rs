@@ -1,14 +1,11 @@
-use std::sync::atomic::Ordering;
-
 use crate::{
     board::NullBoardObserver,
     evaluation::{correct_eval, evaluate},
-    movepick::MovePicker,
     stack::Stack,
-    thread::{RootMove, Status, ThreadData},
+    thread::{Status, ThreadData},
     time::Limits,
     transposition::{Bound, TtDepth},
-    types::{MAX_PLY, Move, Score, draw, is_valid, mate_in, mated_in},
+    types::{MAX_PLY, Move, MoveList, Score, draw, is_valid, mate_in, mated_in},
 };
 
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -191,9 +188,13 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
     let mut bound = Bound::Upper;
     let mut move_count = 0;
 
-    let mut move_picker = MovePicker::new(tt_move);
+    let mut list = MoveList::new();
+    td.board.append_noisy_moves(&mut list);
+    td.board.append_quiet_moves(&mut list);
 
-    while let Some(mv) = move_picker.next::<NODE>(td, false, ply) {
+    for i in 0..list.len() {
+        let mv = list[i].mv;
+
         if NODE::ROOT && !td.root_moves[td.pv_start..td.pv_end].iter().any(|rm| rm.mv == mv) {
             continue;
         }
@@ -346,9 +347,17 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
 
     let mut best_move = Move::NULL;
     let mut move_count = 0;
-    let mut move_picker = MovePicker::new_qsearch();
 
-    while let Some(mv) = move_picker.next::<NODE>(td, !in_check, ply) {
+    let mut list = MoveList::new();
+    if in_check {
+        td.board.append_noisy_moves(&mut list);
+        td.board.append_quiet_moves(&mut list);
+    } else {
+        td.board.append_noisy_moves(&mut list);
+    }
+
+    for i in 0..list.len() {
+        let mv = list[i].mv;
         move_count += 1;
         make_move(td, ply, mv);
         let score = -qsearch::<NODE>(td, -beta, -alpha, ply + 1);
