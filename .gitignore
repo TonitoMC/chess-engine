@@ -1,5 +1,5 @@
 target/
-/networks
+arena/
 *.exe
 *.pdb
 reckless*
