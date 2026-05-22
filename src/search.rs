@@ -1,8 +1,7 @@
 use std::sync::atomic::Ordering;
 
 use crate::{
-    board::NullBoardObserver,
-    evaluation::{correct_eval, evaluate},
+    evaluation::correct_eval,
     movepick::MovePicker,
     stack::Stack,
     thread::{RootMove, Status, ThreadData},
@@ -124,7 +123,7 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         }
 
         if ply as usize >= MAX_PLY - 1 {
-            return evaluate(&td.board);
+            return td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount());
         }
 
         // Mate distance pruning: no point searching if we can't beat current bounds
@@ -169,9 +168,9 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
     if td.board.in_check() {
         raw_eval = Score::NONE;
     } else if let Some(entry) = &entry {
-        raw_eval = if is_valid(entry.raw_eval) { entry.raw_eval } else { evaluate(&td.board) };
+        raw_eval = if is_valid(entry.raw_eval) { entry.raw_eval } else { td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount()) };
     } else {
-        raw_eval = evaluate(&td.board);
+        raw_eval = td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount());
         td.shared.tt.write(hash, TtDepth::SOME, raw_eval, Score::NONE, Bound::None, Move::NULL, ply, tt_pv, false);
     }
 
@@ -388,7 +387,7 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
     }
 
     if ply as usize >= MAX_PLY - 1 {
-        return evaluate(&td.board);
+        return td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount());
     }
 
     let hash = td.board.hash();
@@ -421,7 +420,7 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
     } else {
         raw_eval = match &entry {
             Some(e) if is_valid(e.raw_eval) => e.raw_eval,
-            _ => evaluate(&td.board),
+            _ => td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount()),
         };
         best_score = raw_eval;
 
@@ -504,10 +503,12 @@ fn make_move(td: &mut ThreadData, ply: isize, mv: Move) {
         td.continuation_corrhist.subtable_ptr(td.board.in_check(), mv.is_noisy(), td.board.moved_piece(mv), mv.to());
 
     td.shared.nodes.increment(td.id);
-    td.board.make_move(mv, &mut NullBoardObserver);
+    td.network.push();
+    td.board.make_move(mv, &mut td.network);
     td.shared.tt.prefetch(td.board.hash());
 }
 
 fn undo_move(td: &mut ThreadData, mv: Move) {
+    td.network.pop();
     td.board.undo_move(mv);
 }

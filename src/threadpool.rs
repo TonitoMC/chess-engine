@@ -102,6 +102,7 @@ impl ThreadPool {
             t1.shared.stop_probing_tb.store(false, Ordering::Relaxed);
 
             t1.board = (*board).clone();
+            t1.network.full_refresh(&t1.board);
             t1.root_moves =
                 t1.board.generate_all_moves().iter().map(|v| RootMove { mv: v.mv, ..Default::default() }).collect();
 
@@ -132,6 +133,7 @@ impl ThreadPool {
                         t.id = index + 1;
                         t.time_manager = tm;
                         t.board = (*board).clone();
+                        t.network.full_refresh(&t.board);
                         t.root_moves = root_moves;
 
                         search::start(t, Report::None, thread_count);

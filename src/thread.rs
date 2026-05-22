@@ -5,6 +5,7 @@ use std::sync::{
 
 use crate::{
     board::Board,
+    nnue::Network,
     history::{ContinuationCorrectionHistory, ContinuationHistory, CorrectionHistory, NoisyHistory, QuietHistory},
     numa::{NumaConfig, NumaReplicable, NumaReplicated, NumaReplicatedAccessToken, NumaReplicationContext},
     stack::Stack,
@@ -134,6 +135,7 @@ pub struct ThreadData {
     pub shared: Arc<SharedContext>,
     pub corrhist: Arc<SharedCorrectionHistory>,
     pub board: Board,
+    pub network: Network,
     pub time_manager: TimeManager,
     pub stack: Box<Stack>,
     pub root_moves: Vec<RootMove>,
@@ -164,6 +166,7 @@ impl ThreadData {
             shared,
             corrhist,
             board: Board::starting_position(),
+            network: Network::default(),
             time_manager: TimeManager::new(Limits::Infinite, 0, 0),
             stack: Stack::new(),
             root_moves: Vec::new(),

@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::{
     board::{Board, NullBoardObserver},
-    evaluation::evaluate,
+    nnue::Network,
     search::Report,
     thread::{SharedContext, Status, ThreadData},
     threadpool::ThreadPool,
@@ -323,7 +323,9 @@ fn set_option(threads: &mut ThreadPool, settings: &mut Settings, shared: &Arc<Sh
 }
 
 fn eval(_td: &mut ThreadData, board: &Board) {
-    let score = evaluate(board);
+    let mut network = Network::default();
+    network.full_refresh(board);
+    let score = network.evaluate(board.side_to_move(), board.occupancies().popcount());
     let side = board.side_to_move();
     let white_score = if side == Color::White { score } else { -score };
     println!("Evaluation: {:+.2} (White side)", white_score as f32 / 100.0);

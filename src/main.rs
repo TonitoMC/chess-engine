@@ -5,6 +5,7 @@
 
 mod board;
 mod evaluation;
+mod nnue;
 mod history;
 mod lookup;
 mod misc;
