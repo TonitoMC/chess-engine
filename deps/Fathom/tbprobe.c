@@ -2312,7 +2312,7 @@ static int root_probe_dtz(const Pos *pos, bool hasRepeated, bool useRule50, stru
     m->tbScore =  r >= bound ? TB_VALUE_MATE - TB_MAX_MATE_PLY - 1
                 : r >  0     ? max( 3, r - 800) * TB_VALUE_PAWN / 200
                 : r == 0     ? TB_VALUE_DRAW
-                : r > -bound ? min(-3, r + 800) * TB_VALUE_PAWN / 200
+                : r > -bound ? TB_VALUE_DRAW
                 :             -TB_VALUE_MATE + TB_MAX_MATE_PLY + 1;
   }
   return 1;
