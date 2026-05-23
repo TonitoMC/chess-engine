@@ -6,7 +6,7 @@ use crate::{
 mod simd;
 
 const INPUT_SIZE: usize = 768;
-const HIDDEN_SIZE: usize = 512;
+const HIDDEN_SIZE: usize = 768;
 const OUTPUT_BUCKETS: usize = 4;
 
 const EVAL_SCALE: i32 = 400;
@@ -118,4 +118,4 @@ struct Parameters {
     _padding: [u8; 56],
 }
 
-static PARAMETERS: Parameters = unsafe { std::mem::transmute(*include_bytes!("../networks/512net.nnue")) };
+static PARAMETERS: Parameters = unsafe { std::mem::transmute(*include_bytes!("../networks/768testnet.nnue")) };
