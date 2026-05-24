@@ -145,6 +145,21 @@ PV nodes carry the main line; checking moves require precise handling — both g
 
 ---
 
+### History Table Updates
+
+**File:** `src/search.rs` — after move loop
+
+History tables (quiet, noisy, continuation) were being read for move ordering and LMR adjustments but never written to — all scores were permanently zero. Added update logic after the move loop:
+
+- **Beta cutoff on quiet move**: bonus to quiet history + continuation history (offsets 1, 2, 4, 6) for the best move; scaled malus to all quiets that failed before it
+- **Beta cutoff on capture**: bonus to noisy history for the best move; malus to all captures that failed
+- **Malus scaling**: `1024 / (1 + i)` — earlier failures penalized more than later ones
+- **`update_continuation_histories`**: helper that updates continuation history at plies -1, -2, -4, -6 in one call
+
+Effect: bench node count dropped from ~6.7M to ~3.4M — move ordering now finds cutoffs much earlier, halving the nodes searched.
+
+---
+
 ## Bug Fixes
 
 ### Panic on positions with no legal moves

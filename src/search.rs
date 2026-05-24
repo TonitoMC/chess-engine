@@ -292,6 +292,9 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
     let mut move_count = 0;
     let mut quiets_searched: i32 = 0;
 
+    let mut quiet_moves = crate::types::ArrayVec::<Move, 32>::new();
+    let mut noisy_moves = crate::types::ArrayVec::<Move, 32>::new();
+
     let mut move_picker = MovePicker::new(tt_move);
 
     while let Some(mv) = move_picker.next::<NODE>(td, false, ply) {
@@ -424,10 +427,57 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
                 alpha = score;
             }
         }
+
+        if mv != best_move && move_count <= 32 {
+            if is_quiet {
+                quiet_moves.push(mv);
+            } else {
+                noisy_moves.push(mv);
+            }
+        }
     }
 
     if move_count == 0 {
         return if td.board.in_check() { mated_in(ply) } else { draw(td) };
+    }
+
+    if best_move.is_present() {
+        let stm = td.board.side_to_move();
+        let quiet_bonus = (185 * depth).min(1648);
+        let quiet_malus = (162 * depth).min(1198);
+        let cont_bonus = (107 * depth).min(1051);
+        let cont_malus = (399 * depth).min(933);
+        let noisy_bonus = (89 * depth).min(748);
+        let noisy_malus = (179 * depth).min(1391);
+
+        if best_move.is_noisy() {
+            td.noisy_history.update(
+                td.board.all_threats(),
+                td.board.moved_piece(best_move),
+                best_move.to(),
+                td.board.type_on(best_move.to()),
+                noisy_bonus,
+            );
+        } else {
+            td.quiet_history.update(td.board.all_threats(), stm, best_move, quiet_bonus);
+            update_continuation_histories(td, ply, td.board.moved_piece(best_move), best_move.to(), cont_bonus);
+
+            for (i, &mv) in quiet_moves.iter().enumerate() {
+                let scale = 1024_i32 / (1 + i as i32);
+                td.quiet_history.update(td.board.all_threats(), stm, mv, -quiet_malus * scale / 1024);
+                update_continuation_histories(td, ply, td.board.moved_piece(mv), mv.to(), -cont_malus * scale / 1024);
+            }
+        }
+
+        for &mv in noisy_moves.iter() {
+            td.noisy_history.update(
+                td.board.all_threats(),
+                td.board.moved_piece(mv),
+                mv.to(),
+                td.board.type_on(mv.to()),
+                -noisy_malus,
+            );
+        }
     }
 
     if !(NODE::ROOT && td.pv_index > 0) {
@@ -570,6 +620,17 @@ fn update_correction_histories(td: &mut ThreadData, depth: i32, diff: i32, ply: 
     corrhist.pawn.update(stm, td.board.pawn_key(), bucket, bonus);
     corrhist.non_pawn[crate::types::Color::White].update(stm, td.board.non_pawn_key(crate::types::Color::White), bucket, bonus);
     corrhist.non_pawn[crate::types::Color::Black].update(stm, td.board.non_pawn_key(crate::types::Color::Black), bucket, bonus);
+}
+
+fn update_continuation_histories(td: &mut ThreadData, ply: isize, piece: crate::types::Piece, sq: crate::types::Square, bonus: i32) {
+    for offset in [1isize, 2, 4, 6] {
+        if ply >= offset {
+            let entry = &td.stack[ply - offset];
+            if entry.mv.is_present() {
+                td.continuation_history.update(entry.conthist, piece, sq, bonus);
+            }
+        }
+    }
 }
 
 fn make_move(td: &mut ThreadData, ply: isize, mv: Move) {
