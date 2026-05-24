@@ -102,6 +102,18 @@ The engine communicates over UCI. Point any UCI-compatible GUI or `fastchess` at
 | `v2.4-additional-heuristics` | Adds Late Move Pruning + Singular Extensions            |
 | `v3-nnue`            | Replaces HCE with a trained 768→384x2→1 NNUE (4 output buckets) |
 
+## Changing the engine name / version
+
+The UCI `id name` string printed on startup is `Reckless <version>-<git-sha>`. Two levers:
+
+- **Version number** — edit `version` in `Cargo.toml` (e.g. `version = "1.0.0"`)
+- **Engine name** — edit `src/uci.rs:151` directly:
+  ```rust
+  println!("id name MyEngineName {}", env!("ENGINE_VERSION"));
+  ```
+
+The git SHA is appended automatically by `build/build.rs`. To get a clean version string without the SHA, tag the commit (`git tag v1.0.0`) — the build script will use the tag.
+
 ## License
 
 This project is licensed under the **GNU AFFERO GENERAL PUBLIC LICENSE v3.0**. It incorporates code from the [Reckless Engine](https://github.com/codedeliveryservice/Reckless).
