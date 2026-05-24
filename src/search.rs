@@ -2,7 +2,7 @@ use std::sync::atomic::Ordering;
 
 use crate::{
     evaluation::correct_eval,
-    movepick::MovePicker,
+    movepick::{MovePicker, Stage},
     stack::Stack,
     thread::{RootMove, Status, ThreadData},
     time::Limits,
@@ -48,6 +48,10 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
     td.pv_start = 0;
     td.pv_end = td.root_moves.len();
 
+    if td.root_moves.is_empty() {
+        return;
+    }
+
     for depth in 1..MAX_PLY as i32 {
         if td.id == 0
             && let Limits::Depth(maximum) = td.time_manager.limits()
@@ -65,7 +69,33 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
             rm.previous_score = rm.score;
         }
 
-        let score = search::<Root>(td, -Score::INFINITE, Score::INFINITE, depth, 0);
+        let prev = td.root_moves.first().map_or(Score::NONE, |rm| rm.previous_score);
+
+        let (mut alpha, mut beta, mut delta) = if depth > 4 && is_valid(prev) && prev.abs() < 1500 {
+            let d = 20;
+            (prev - d, prev + d, d)
+        } else {
+            (-Score::INFINITE, Score::INFINITE, Score::INFINITE)
+        };
+
+        let _score = loop {
+            let score = search::<Root>(td, alpha, beta, depth, 0);
+
+            if td.shared.status.get() == Status::STOPPED {
+                break score;
+            }
+
+            if score <= alpha {
+                beta = (alpha + beta) / 2;
+                alpha = (score - delta).max(-Score::INFINITE);
+                delta = delta / 2 + 10;
+            } else if score >= beta {
+                beta = (score + delta).min(Score::INFINITE);
+                delta = delta / 2 + 10;
+            } else {
+                break score;
+            }
+        };
 
         if td.shared.status.get() == Status::STOPPED {
             break;
@@ -77,8 +107,6 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
         if report == Report::Full {
             td.print_uci_info(depth);
         }
-
-        let _ = score;
 
         if td.time_manager.soft_limit(td, || 1.0) {
             td.shared.status.set(Status::STOPPED);
@@ -95,7 +123,7 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
     }
 }
 
-fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, depth: i32, ply: isize) -> i32 {
+fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mut depth: i32, ply: isize) -> i32 {
     debug_assert!(ply as usize <= MAX_PLY);
 
     if !NODE::ROOT && NODE::PV {
@@ -161,6 +189,12 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         }
     }
 
+    // Internal Iterative Reduction: without a TT move the search is poorly ordered,
+    // so shave a ply rather than searching deeply on bad move ordering.
+    if depth >= 4 && !tt_move.is_present() {
+        depth -= 1;
+    }
+
     // Static eval (used for correction history bookkeeping)
     let raw_eval;
     let correction_value = eval_correction(td, ply);
@@ -187,18 +221,23 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
 
     let eval = td.stack[ply].eval;
 
-    // Reverse Futility Pruning: if static eval beats beta by a large enough
-    // margin, we're unlikely to fall below beta after any move, so prune.
+    // Improving: true when our eval is better than it was 2 plies ago.
+    // Used to tighten or loosen pruning thresholds accordingly.
+    let improving = !td.board.in_check()
+        && ply >= 2
+        && is_valid(td.stack[ply - 2].eval)
+        && eval > td.stack[ply - 2].eval;
+
+    // Reverse Futility Pruning
     if !NODE::PV
         && !td.board.in_check()
         && depth <= 8
-        && eval - 75 * depth >= beta
+        && eval - 75 * (depth - improving as i32) >= beta
     {
         return eval;
     }
 
-    // Null Move Pruning: give the opponent a free move. If they still can't beat
-    // beta, our position is good enough to prune without searching further.
+    // Null Move Pruning
     if !NODE::PV
         && !td.board.in_check()
         && depth >= 3
@@ -206,7 +245,7 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         && td.board.plies_from_null() > 0
         && td.board.has_non_pawn_material(td.board.side_to_move())
     {
-        let reduction = 3 + depth / 3;
+        let reduction = 3 + depth / 3 + ((eval - beta) / 200).clamp(0, 3);
         td.board.make_null_move();
         let null_score = -search::<NonPV>(td, -beta, -beta + 1, depth - reduction, ply + 1);
         td.board.undo_null_move();
@@ -214,6 +253,17 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         if null_score >= beta {
             return beta;
         }
+    }
+
+    // Razoring: if eval is far below alpha at low depth, a qsearch is likely
+    // sufficient — a full search won't recover enough to matter.
+    if !NODE::PV
+        && !td.board.in_check()
+        && depth <= 4
+        && is_valid(eval)
+        && eval + 220 * depth + 135 < alpha
+    {
+        return qsearch::<NODE>(td, alpha, beta, ply);
     }
 
     // Singular Extensions: if the TT move looks way better than all alternatives,
@@ -240,9 +290,7 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
     let mut best_move = Move::NULL;
     let mut bound = Bound::Upper;
     let mut move_count = 0;
-
-    // LMP thresholds: after trying this many quiet moves at low depth, skip the rest
-    let lmp_threshold = [0, 8, 12, 16, 20];
+    let mut quiets_searched: i32 = 0;
 
     let mut move_picker = MovePicker::new(tt_move);
 
@@ -251,7 +299,6 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
             continue;
         }
 
-        // Skip the excluded move during singular search
         if mv == td.stack[ply].excluded {
             continue;
         }
@@ -262,35 +309,62 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         let initial_nodes = td.nodes();
         let is_quiet = !mv.is_noisy();
 
-        // Late Move Pruning: at low depths, skip quiet moves beyond the threshold
-        if !NODE::PV
-            && is_quiet
-            && depth <= 4
-            && move_count > lmp_threshold[depth as usize]
-        {
-            continue;
+        let is_bad_noisy = !is_quiet && move_picker.stage() == Stage::BadNoisy;
+
+        if !NODE::PV && best_score > -Score::INFINITE {
+            if is_quiet {
+                // Late Move Pruning: quadratic threshold scaled by improving.
+                if depth <= 4
+                    && quiets_searched > 3 + depth * depth / (1 + !improving as i32)
+                {
+                    continue;
+                }
+
+                // Futility Pruning: skip quiet moves when static eval is far below alpha.
+                if !td.board.in_check()
+                    && depth <= 5
+                    && is_valid(eval)
+                    && eval + 130 * depth + 45 < alpha
+                {
+                    continue;
+                }
+            }
+
+            // SEE pruning: skip bad captures at low depth.
+            if is_bad_noisy && depth <= 6 {
+                continue;
+            }
         }
 
-        let extension = if mv == tt_move && singular_extension { 1 } else { 0 };
+        let quiet_score = if is_quiet {
+            td.quiet_history.get(td.board.all_threats(), td.board.side_to_move(), mv)
+        } else {
+            0
+        };
+
+        let singular_ext = mv == tt_move && singular_extension;
 
         make_move(td, ply, mv);
+
+        // Check extension: extend moves that give check — low branching, forced sequences.
+        let gives_check = td.board.in_check();
+        let extension = i32::from(singular_ext) + i32::from(gives_check && !singular_ext);
 
         let score = if NODE::PV && move_count == 1 {
             -search::<PV>(td, -beta, -alpha, depth - 1 + extension, ply + 1)
         } else {
-            // Late Move Reductions: moves tried late are likely bad, so search
-            // them at reduced depth. If the reduced search beats alpha anyway,
-            // re-search at full depth to confirm.
-            let reduction = if depth >= 3 && move_count > 3 && is_quiet {
+            let reduction = if depth >= 3 && move_count > 2 && is_quiet {
                 let r = (depth as f32).ln() * (move_count as f32).ln() / 2.0;
-                (r as i32).clamp(1, depth - 1)
+                let mut r = r as i32 - quiet_score / 8192;
+                r -= NODE::PV as i32;
+                r -= gives_check as i32;
+                r.clamp(0, depth - 1)
             } else {
                 0
             };
 
             let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension - reduction, ply + 1);
 
-            // Re-search at full depth if the reduced search beat alpha
             let s = if s > alpha && reduction > 0 {
                 -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension, ply + 1)
             } else {
@@ -303,6 +377,10 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
                 s
             }
         };
+
+        if is_quiet {
+            quiets_searched += 1;
+        }
 
         undo_move(td, mv);
 

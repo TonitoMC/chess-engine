@@ -118,4 +118,4 @@ struct Parameters {
     _padding: [u8; 56],
 }
 
-static PARAMETERS: Parameters = unsafe { std::mem::transmute(*include_bytes!("../networks/finalnet.nnue")) };
+static PARAMETERS: Parameters = unsafe { std::mem::transmute(*include_bytes!("../networks/768net.nnue")) };
