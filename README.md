@@ -10,6 +10,21 @@ The original neural evaluation was removed and rebuilt from scratch.
 
 ---
 
+## Overview
+
+| Version | Est. ELO | Key Addition |
+|---|---|---|
+| `v1-base` | ~2055 | Baseline alpha-beta, no move ordering |
+| `v1.5-move-ordering` | ~2514 | Staged move picker with SEE + history heuristics |
+| `v2-tapered-eval` | — | PeSTO tapered evaluation + NMP/LMR/RFP |
+| `v2.4-additional-heuristics` | ~2738 | LMP + Singular Extensions |
+| `v3-test` | ~3198 | NNUE evaluation (768 hidden) |
+| `v4-nnue-heuristics` | ~3249 | NNUE + refined search heuristics *(main)* |
+
+All head-to-head tests: 600 games, 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book. See [Informe.pdf](Informe.pdf) for full results.
+
+---
+
 ## Shared Infrastructure (all branches)
 
 All versions share the following components inherited or adapted from Reckless:
@@ -27,15 +42,13 @@ All versions share the following components inherited or adapted from Reckless:
 
 ---
 
-## Branch Overview
+## Branch Details
 
 ### `v1-base` — Baseline Alpha-Beta
 
 Minimal working engine. No move ordering — moves are iterated in raw generation order. The TT is read and written but the TT move is never prioritized.
 
 **Evaluation:** fixed material values (P=100, N=320, B=330, R=500, Q=900) plus Michniewski's Simplified Evaluation Function PSTs — one table per piece, phase-independent.
-
-**Estimated ELO: ~2055**
 
 ---
 
@@ -50,8 +63,6 @@ Same evaluation as v1. Adds a full staged move picker:
 
 Move ordering does not change the correctness of the search — it only changes how quickly beta cutoffs are found. Better ordering → more pruning → faster search → more depth in the same time.
 
-**Estimated ELO: ~2514** (+321 ± 30 vs v1, 600 games)
-
 ---
 
 ### `v2-tapered-eval` — PeSTO Evaluation
@@ -64,9 +75,7 @@ score = (mg_score × phase + eg_score × (24 − phase)) / 24
 
 Phase is computed from material on the board (max 24: Q×4, R×2, minor×1). As pieces come off the board the evaluation transitions smoothly from middlegame to endgame weights.
 
-> Intermediate branches `v2.1-nmp`, `v2.2-lmr`, `v2.3-rfp` add Null Move Pruning, Late Move Reductions, and Reverse Futility Pruning respectively as individual steps. `v2-tapered-eval` is the baseline that accumulates all three.
-
-**+235 ± 32 ELO vs v1.5** (600 games)
+> Intermediate branches `v2.1-nmp`, `v2.2-lmr`, `v2.3-rfp` added Null Move Pruning, Late Move Reductions, and Reverse Futility Pruning as individual steps. `v2-tapered-eval` is the baseline that accumulates all three.
 
 ---
 
@@ -77,18 +86,12 @@ Builds on the full pruning stack (NMP + LMR + RFP) and adds:
 - **Late Move Pruning (LMP)** — at depth ≤ 4, if enough quiet moves have already been tried (threshold 8/12/16/20 by depth), skip the rest entirely rather than reducing. More aggressive than LMR for shallow nodes.
 - **Singular Extensions** — if the TT move is a lower-bound entry with sufficient depth, search all other moves at half-depth with a window just below the TT score. If nothing beats it, the TT move is "singular" and gets 1 extra ply. Helps the engine see deep into forcing tactical sequences.
 
-This is the strongest purely heuristic version.
-
-**Estimated ELO: ~2738** (+564 ± 59 vs v2-tapered-eval, 600 games)
-
 <details>
 <summary>Results vs Stockfish</summary>
 
 | Opponent | Result |
 |---|---|
 | Stockfish 2800 | −62 ± 24 ELO (LOS 0%) |
-
-Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
 
 </details>
 
@@ -107,9 +110,7 @@ Replaces PeSTO with a learned NNUE. The search stack is identical to v2.4.
 - Forward pass uses AVX2 SIMD intrinsics; falls back to scalar on unsupported hardware
 - Trained with [Bullet](https://github.com/jnlt3/bullet) on UHO positions annotated by Stockfish, with a nudging phase on lc0 game outcomes to correct positional biases
 
-> Experimental NNUE variants (different network sizes, datasets, nudging combinations) were explored on branches `v3.1-512-hidden`, `v3.2-768-hidden`, `v3.3-1024-hidden`, `v3.4-1024-nudge`. The net on `v3-test` is the strongest found across those experiments.
-
-**Estimated ELO: ~3198** (+545 ± 61 vs v2.4, 600 games)
+> Experimental NNUE variants were explored on branches `v3.1-512-hidden`, `v3.2-768-hidden`, `v3.3-1024-hidden`, `v3.4-1024-nudge`. The net on `v3-test` is the strongest found across those experiments.
 
 <details>
 <summary>Results vs Stockfish</summary>
@@ -117,8 +118,6 @@ Replaces PeSTO with a learned NNUE. The search stack is identical to v2.4.
 | Opponent | Result |
 |---|---|
 | Stockfish 3190 | +8 ± 21 ELO (LOS 76.3%) |
-
-Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
 
 </details>
 
@@ -139,8 +138,6 @@ Keeps the v3-test NNUE and adds a layer of search improvements on top:
 | **SEE pruning in search** | Bad captures skipped at depth ≤ 6, not just deprioritized in move ordering. |
 | **Tuned LMR** | Reduction formula incorporates quiet history score and a check bonus for finer control. |
 
-**Estimated ELO: ~3249** (+71 ± 18 vs v3-test, 600 games)
-
 <details>
 <summary>Results vs Stockfish</summary>
 
@@ -148,26 +145,7 @@ Keeps the v3-test NNUE and adds a layer of search improvements on top:
 |---|---|
 | Stockfish 3190 | +59 ± 23 ELO (LOS 100%) |
 
-Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
-
 </details>
-
----
-
-## Results Summary
-
-All head-to-head tests: 600 games, 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
-
-| Version | Est. ELO | vs Previous | Notes |
-|---|---|---|---|
-| `v1-base` | ~2055 | — | Baseline; no move ordering |
-| `v1.5-move-ordering` | ~2514 | +321 ± 30 | Full staged move picker |
-| `v2-tapered-eval` | — | +235 ± 32 | PeSTO tapered eval + NMP/LMR/RFP |
-| `v2.4-additional-heuristics` | ~2738 | +564 ± 59 | LMP + Singular Extensions |
-| `v3-test` | ~3198 | +545 ± 61 | NNUE 768 hidden |
-| `v4-nnue-heuristics` | ~3249 | +71 ± 18 | NNUE + refined search heuristics |
-
-See [Informe.pdf](Informe.pdf) for full tournament results and analysis.
 
 ---
 
@@ -183,16 +161,6 @@ cargo build --release
 #   v2.4-*                → tono-chess-v2_4
 #   v3-test               → tono-chess-v3
 #   v4-nnue-heuristics    → tono-chess-v4
-```
-
-Pre-built native binaries for each main version are in `arena/engines/`:
-
-```
-arena/engines/Tono-Chess-V1
-arena/engines/Tono-Chess-V1.5
-arena/engines/Tono-Chess-V2.4
-arena/engines/Tono-Chess-V3
-arena/engines/Tono-Chess-V4
 ```
 
 The engine speaks UCI. Point any UCI-compatible GUI (e.g. [En-Croissant](https://encroissant.org/)) or `fastchess` at the binary.
