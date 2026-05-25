@@ -1,5 +1,9 @@
 target/
+arena/
 *.exe
 *.pdb
+tono-chess*
 reckless*
 bindings.rs
+.tex/
+*.pdf
