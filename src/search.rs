@@ -204,6 +204,7 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, de
         move_count += 1;
         td.stack[ply].move_count = move_count;
 
+        let is_quiet = !mv.is_noisy();
         let initial_nodes = td.nodes();
         make_move(td, ply, mv);
 
