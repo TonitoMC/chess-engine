@@ -1,10 +1,12 @@
 # Tono Chess Engine
 
+> Based on [Reckless](https://github.com/codedeliveryservice/Reckless) by [@codedeliveryservice](https://github.com/codedeliveryservice), reusing its board representation (bitboards), legal move generation, UCI protocol handling, and transposition table. Licensed under GNU AGPL v3.0.
+
 A chess engine written in Rust, built incrementally to study and compare different search and evaluation techniques used in modern engines. Each major version is tracked on its own branch; results are measured empirically via automated tournaments using `fastchess`.
 
-The engine is based on [Reckless](https://github.com/codedeliveryservice/Reckless), reusing its board representation (bitboards), legal move generation, UCI protocol handling, and transposition table. The original neural evaluation was removed and rebuilt from scratch.
+The original neural evaluation was removed and rebuilt from scratch.
 
-📄 [Full project report (PDF)](report.pdf)
+📄 [Full project report (PDF)](Informe.pdf)
 
 ---
 
@@ -33,6 +35,8 @@ Minimal working engine. No move ordering — moves are iterated in raw generatio
 
 **Evaluation:** fixed material values (P=100, N=320, B=330, R=500, Q=900) plus Michniewski's Simplified Evaluation Function PSTs — one table per piece, phase-independent.
 
+**Estimated ELO: ~2055**
+
 ---
 
 ### `v1.5-move-ordering` — Staged Move Ordering
@@ -46,6 +50,8 @@ Same evaluation as v1. Adds a full staged move picker:
 
 Move ordering does not change the correctness of the search — it only changes how quickly beta cutoffs are found. Better ordering → more pruning → faster search → more depth in the same time.
 
+**Estimated ELO: ~2514** (+321 ± 30 vs v1, 600 games)
+
 ---
 
 ### `v2-tapered-eval` — PeSTO Evaluation
@@ -56,31 +62,33 @@ Replaces the single-phase Michniewski PSTs with PeSTO's tuned tables. Introduces
 score = (mg_score × phase + eg_score × (24 − phase)) / 24
 ```
 
-Phase is computed from material on the board (max 24: Q×4, R×2, minor×1). As pieces come off the board the evaluation transitions smoothly from middlegame to endgame weights. This is the baseline for all subsequent pruning experiments.
+Phase is computed from material on the board (max 24: Q×4, R×2, minor×1). As pieces come off the board the evaluation transitions smoothly from middlegame to endgame weights.
 
-> Intermediate branches `v2.1-nmp`, `v2.2-lmr`, `v2.3-rfp` add Null Move Pruning, Late Move Reductions, and Reverse Futility Pruning respectively — each a single self-contained change on top of the previous.
+> Intermediate branches `v2.1-nmp`, `v2.2-lmr`, `v2.3-rfp` add Null Move Pruning, Late Move Reductions, and Reverse Futility Pruning respectively as individual steps. `v2-tapered-eval` is the baseline that accumulates all three.
+
+**+235 ± 32 ELO vs v1.5** (600 games)
 
 ---
 
 ### `v2.4-additional-heuristics` — Full Heuristic Engine
 
-Builds on the full pruning stack (NMP → LMR → RFP) and adds:
+Builds on the full pruning stack (NMP + LMR + RFP) and adds:
 
 - **Late Move Pruning (LMP)** — at depth ≤ 4, if enough quiet moves have already been tried (threshold 8/12/16/20 by depth), skip the rest entirely rather than reducing. More aggressive than LMR for shallow nodes.
 - **Singular Extensions** — if the TT move is a lower-bound entry with sufficient depth, search all other moves at half-depth with a window just below the TT score. If nothing beats it, the TT move is "singular" and gets 1 extra ply. Helps the engine see deep into forcing tactical sequences.
 
-This is the strongest purely heuristic version. Estimated ELO: **~2615–2700**.
+This is the strongest purely heuristic version.
+
+**Estimated ELO: ~2738** (+564 ± 59 vs v2-tapered-eval, 600 games)
 
 <details>
 <summary>Results vs Stockfish</summary>
 
-| Opponent | Games | W/D/L | ELO diff | LOS |
-|---|---|---|---|---|
-| Stockfish 2300 | 100 | 91/9/0 | +401.92 ± 128.33 | 100% |
-| Stockfish 2700 | 100 | 45/49/6 | −13.90 ± 65.35 | 33.6% |
-| Stockfish 2700 + UHO book | 400 | 192/175/33 | +14.77 ± 31.23 | 82.4% |
+| Opponent | Result |
+|---|---|
+| Stockfish 2800 | −62 ± 24 ELO (LOS 0%) |
 
-Time control: 8+0.08s, 1 thread, 16 MB hash.
+Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
 
 </details>
 
@@ -99,7 +107,20 @@ Replaces PeSTO with a learned NNUE. The search stack is identical to v2.4.
 - Forward pass uses AVX2 SIMD intrinsics; falls back to scalar on unsupported hardware
 - Trained with [Bullet](https://github.com/jnlt3/bullet) on UHO positions annotated by Stockfish, with a nudging phase on lc0 game outcomes to correct positional biases
 
-> Experimental NNUE variants (different network sizes, datasets, nudging combinations) are on branches `v3.1-512-hidden`, `v3.2-768-hidden`, `v3.3-1024-hidden`, `v3.4-1024-nudge`. The net on `v3-test` is the strongest found across those experiments.
+> Experimental NNUE variants (different network sizes, datasets, nudging combinations) were explored on branches `v3.1-512-hidden`, `v3.2-768-hidden`, `v3.3-1024-hidden`, `v3.4-1024-nudge`. The net on `v3-test` is the strongest found across those experiments.
+
+**Estimated ELO: ~3198** (+545 ± 61 vs v2.4, 600 games)
+
+<details>
+<summary>Results vs Stockfish</summary>
+
+| Opponent | Result |
+|---|---|
+| Stockfish 3190 | +8 ± 21 ELO (LOS 76.3%) |
+
+Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
+
+</details>
 
 ---
 
@@ -118,22 +139,35 @@ Keeps the v3-test NNUE and adds a layer of search improvements on top:
 | **SEE pruning in search** | Bad captures skipped at depth ≤ 6, not just deprioritized in move ordering. |
 | **Tuned LMR** | Reduction formula incorporates quiet history score and a check bonus for finer control. |
 
+**Estimated ELO: ~3249** (+71 ± 18 vs v3-test, 600 games)
+
+<details>
+<summary>Results vs Stockfish</summary>
+
+| Opponent | Result |
+|---|---|
+| Stockfish 3190 | +59 ± 23 ELO (LOS 100%) |
+
+Time control: 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
+
+</details>
+
 ---
 
 ## Results Summary
 
-Estimated ELO by version, measured against Stockfish at various levels. All tests: 8+0.08s, 1 thread, 16 MB hash.
+All head-to-head tests: 600 games, 10+0.1s, 1 thread, 16 MB hash, UHO_Lichess.epd opening book.
 
-| Version | Est. ELO | Notes |
-|---|---|---|
-| `v1-base` | — | Baseline |
-| `v1.5-move-ordering` | — | |
-| `v2-tapered-eval` | — | |
-| `v2.4-additional-heuristics` | ~2615–2700 | Confirmed vs SF2700 with UHO book (400 games) |
-| `v3-test` | — | NNUE 768 hidden |
-| `v4-nnue-heuristics` | — | NNUE + refined search |
+| Version | Est. ELO | vs Previous | Notes |
+|---|---|---|---|
+| `v1-base` | ~2055 | — | Baseline; no move ordering |
+| `v1.5-move-ordering` | ~2514 | +321 ± 30 | Full staged move picker |
+| `v2-tapered-eval` | — | +235 ± 32 | PeSTO tapered eval + NMP/LMR/RFP |
+| `v2.4-additional-heuristics` | ~2738 | +564 ± 59 | LMP + Singular Extensions |
+| `v3-test` | ~3198 | +545 ± 61 | NNUE 768 hidden |
+| `v4-nnue-heuristics` | ~3249 | +71 ± 18 | NNUE + refined search heuristics |
 
-See [report.pdf](report.pdf) for full tournament results and analysis.
+See [Informe.pdf](Informe.pdf) for full tournament results and analysis.
 
 ---
 
