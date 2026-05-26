@@ -17,6 +17,10 @@ pub enum Report {
     Full,
 }
 
+// NodeType is a compile-time tag that lets the search specialize behavior for three cases:
+//   Root  — the top-level call; tracks per-move node counts and PV lines
+//   PV    — any node inside the principal variation; maintains the PV table and uses full windows
+//   NonPV — all other nodes; uses null-window searches and can apply aggressive pruning
 pub trait NodeType {
     const PV: bool;
     const ROOT: bool;
@@ -40,6 +44,9 @@ impl NodeType for NonPV {
     const ROOT: bool = false;
 }
 
+// Entry point for iterative deepening. Called once per move decision.
+// Searches depth 1, 2, 3, … until time runs out or the depth limit is hit.
+// Each completed iteration seeds the next via the TT and updates root move scores.
 pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
     td.completed_depth = 0;
     td.pv_table.clear(0);
@@ -69,6 +76,9 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
             rm.previous_score = rm.score;
         }
 
+        // Aspiration windows: start with a narrow band around the previous score.
+        // If the search result falls outside [alpha, beta], widen and retry.
+        // At low depths or with no prior score, use a full infinite window instead.
         let prev = td.root_moves.first().map_or(Score::NONE, |rm| rm.previous_score);
 
         let (mut alpha, mut beta, mut delta) = if depth > 4 && is_valid(prev) && prev.abs() < 1500 {
@@ -86,10 +96,12 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
             }
 
             if score <= alpha {
+                // Fail-low: result came in below our lower bound — widen downward and retry.
                 beta = (alpha + beta) / 2;
                 alpha = (score - delta).max(-Score::INFINITE);
                 delta = delta / 2 + 10;
             } else if score >= beta {
+                // Fail-high: result came in above our upper bound — widen upward and retry.
                 beta = (score + delta).min(Score::INFINITE);
                 delta = delta / 2 + 10;
             } else {
@@ -123,6 +135,16 @@ pub fn start(td: &mut ThreadData, report: Report, _thread_count: usize) {
     }
 }
 
+// Core alpha-beta search (negamax formulation with PVS).
+//
+// Returns the best score achievable in the current position within [alpha, beta].
+// alpha = best score the current side is guaranteed regardless of opponent play.
+// beta  = best score the opponent is guaranteed; if we exceed it they won't allow this line.
+//
+// PVS (Principal Variation Search): the first move is searched with a full [alpha, beta] window.
+// All subsequent moves are first tried with a null window [-alpha-1, -alpha]. If one of them
+// unexpectedly beats alpha, it is re-searched with the full window to get the exact score.
+// This avoids the cost of full-window searches for moves that are unlikely to be best.
 fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mut depth: i32, ply: isize) -> i32 {
     debug_assert!(ply as usize <= MAX_PLY);
 
@@ -154,7 +176,8 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
             return td.network.evaluate(td.board.side_to_move(), td.board.occupancies().popcount());
         }
 
-        // Mate distance pruning: no point searching if we can't beat current bounds
+        // Mate distance pruning: tighten the window to only beats we can actually achieve
+        // given the number of plies already played. If the window collapses, return immediately.
         alpha = alpha.max(mated_in(ply));
         beta = beta.min(mate_in(ply + 1));
         if alpha >= beta {
@@ -162,6 +185,9 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         }
     }
 
+    // Transposition table lookup: check if we've already searched this position.
+    // The TT stores: the best move found, the score, and whether it was an exact
+    // score or only a bound (upper = all moves failed low, lower = caused a cutoff).
     let hash = td.board.hash();
     let entry = td.shared.tt.read(hash, td.board.halfmove_clock(), ply);
 
@@ -175,7 +201,9 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         tt_score = entry.score;
         tt_bound = entry.bound;
 
-        // TT cutoff in non-PV nodes
+        // TT cutoff: if the stored result was searched at sufficient depth and the bound
+        // is compatible with the current window, we can return without re-searching.
+        // Only allowed in non-PV nodes to preserve the accuracy of the principal variation.
         if !NODE::PV
             && entry.depth >= depth
             && is_valid(tt_score)
@@ -195,7 +223,10 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         depth -= 1;
     }
 
-    // Static eval (used for correction history bookkeeping)
+    // Compute static evaluation. This is the NNUE score corrected by history.
+    // Correction history tracks how often the raw static eval under- or over-shot
+    // the final search result, and adjusts accordingly.
+    // When in check, static eval is meaningless, so we leave it as NONE.
     let raw_eval;
     let correction_value = eval_correction(td, ply);
 
@@ -221,14 +252,17 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
 
     let eval = td.stack[ply].eval;
 
-    // Improving: true when our eval is better than it was 2 plies ago.
-    // Used to tighten or loosen pruning thresholds accordingly.
+    // Improving: true when our static eval is better than it was 2 plies ago (our last turn).
+    // When improving, the position is getting better so we can afford to be more aggressive.
+    // When not improving, the position is getting worse so we tighten pruning thresholds.
     let improving = !td.board.in_check()
         && ply >= 2
         && is_valid(td.stack[ply - 2].eval)
         && eval > td.stack[ply - 2].eval;
 
-    // Reverse Futility Pruning
+    // Reverse Futility Pruning (RFP): if our static eval exceeds beta by a large enough
+    // margin at low depth, assume the position is so good we'll get a cutoff anyway.
+    // "Reverse" because it prunes based on being too good (vs futility which prunes too bad).
     if !NODE::PV
         && !td.board.in_check()
         && depth <= 8
@@ -237,7 +271,9 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         return eval;
     }
 
-    // Null Move Pruning
+    // Null Move Pruning (NMP): try passing our turn. If the opponent still can't beat beta
+    // even with a free move, our position is strong enough to prune this node.
+    // Not used when: in check (illegal), no non-pawn material (zugzwang risk), or after a prior null move.
     if !NODE::PV
         && !td.board.in_check()
         && depth >= 3
@@ -255,8 +291,8 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         }
     }
 
-    // Razoring: if eval is far below alpha at low depth, a qsearch is likely
-    // sufficient — a full search won't recover enough to matter.
+    // Razoring: if static eval is far below alpha at low depth, the position is likely
+    // too bad to recover with a full search — drop directly into qsearch instead.
     if !NODE::PV
         && !td.board.in_check()
         && depth <= 4
@@ -266,9 +302,10 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         return qsearch::<NODE>(td, alpha, beta, ply);
     }
 
-    // Singular Extensions: if the TT move looks way better than all alternatives,
-    // extend its search by 1 ply. We verify this by searching all other moves at
-    // reduced depth with a window just below the TT score. If nothing beats it, extend.
+    // Singular Extensions: check whether the TT move is "singular" — so much better than
+    // all alternatives that it deserves an extra ply of search depth.
+    // We verify by searching all moves *except* the TT move at (depth/2) with a window
+    // just below the TT score. If nothing exceeds that bar, the TT move is singular.
     let singular_extension = if !NODE::ROOT
         && depth >= 6
         && tt_move.is_present()
@@ -292,16 +329,22 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
     let mut move_count = 0;
     let mut quiets_searched: i32 = 0;
 
+    // Track moves tried that did not cause a beta cutoff.
+    // Used after the loop to apply history malus (penalty) to non-best moves.
     let mut quiet_moves = crate::types::ArrayVec::<Move, 32>::new();
     let mut noisy_moves = crate::types::ArrayVec::<Move, 32>::new();
 
+    // The move picker yields moves in priority order:
+    // TT move → good captures (SEE+) → quiet moves (history-scored) → bad captures (SEE-)
     let mut move_picker = MovePicker::new(tt_move);
 
     while let Some(mv) = move_picker.next::<NODE>(td, false, ply) {
+        // At root, only consider moves in the current PV window (used for multi-PV support).
         if NODE::ROOT && !td.root_moves[td.pv_start..td.pv_end].iter().any(|rm| rm.mv == mv) {
             continue;
         }
 
+        // Skip the move excluded during singular extension probing.
         if mv == td.stack[ply].excluded {
             continue;
         }
@@ -314,16 +357,20 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
 
         let is_bad_noisy = !is_quiet && move_picker.stage() == Stage::BadNoisy;
 
+        // Move pruning: skip moves that are unlikely to be useful.
+        // Only applies in non-PV nodes where we already have a decent lower bound.
         if !NODE::PV && best_score > -Score::INFINITE {
             if is_quiet {
-                // Late Move Pruning: quadratic threshold scaled by improving.
+                // Late Move Pruning (LMP): after trying enough quiet moves, skip the rest.
+                // The threshold is higher when improving (we can afford to search more).
                 if depth <= 4
                     && quiets_searched > 3 + depth * depth / (1 + !improving as i32)
                 {
                     continue;
                 }
 
-                // Futility Pruning: skip quiet moves when static eval is far below alpha.
+                // Futility Pruning: skip quiet moves when static eval is so far below alpha
+                // that even an optimistic bonus won't bring the score up to alpha.
                 if !td.board.in_check()
                     && depth <= 5
                     && is_valid(eval)
@@ -333,12 +380,15 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
                 }
             }
 
-            // SEE pruning: skip bad captures at low depth.
+            // SEE pruning: skip bad captures at low depth rather than just deprioritizing them.
+            // At low depth the cost of searching them is not worth the rare cases where they matter.
             if is_bad_noisy && depth <= 6 {
                 continue;
             }
         }
 
+        // Quiet history score for this move — used to tune the LMR reduction below.
+        // Moves the engine has found good in the past get smaller reductions.
         let quiet_score = if is_quiet {
             td.quiet_history.get(td.board.all_threats(), td.board.side_to_move(), mv)
         } else {
@@ -349,13 +399,18 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
 
         make_move(td, ply, mv);
 
-        // Check extension: extend moves that give check — low branching, forced sequences.
+        // Check extension: moves that give check enter forcing sequences with low branching,
+        // so we extend them by 1 ply to avoid missing tactics at the horizon.
         let gives_check = td.board.in_check();
         let extension = i32::from(singular_ext) + i32::from(gives_check && !singular_ext);
 
         let score = if NODE::PV && move_count == 1 {
+            // First move in a PV node: search with full [alpha, beta] window.
             -search::<PV>(td, -beta, -alpha, depth - 1 + extension, ply + 1)
         } else {
+            // Late Move Reductions (LMR): later moves in the order are less likely to be good.
+            // Reduce their search depth proportional to how late they appear and how deep we are.
+            // History score and whether the move gives check modulate the reduction.
             let reduction = if depth >= 3 && move_count > 2 && is_quiet {
                 let r = (depth as f32).ln() * (move_count as f32).ln() / 2.0;
                 let mut r = r as i32 - quiet_score / 8192;
@@ -366,14 +421,17 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
                 0
             };
 
+            // Try with null window and reduced depth first.
             let s = -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension - reduction, ply + 1);
 
+            // If it beat alpha with a reduction, research at full depth to confirm the result.
             let s = if s > alpha && reduction > 0 {
                 -search::<NonPV>(td, -alpha - 1, -alpha, depth - 1 + extension, ply + 1)
             } else {
                 s
             };
 
+            // If it still beats alpha in a PV node, research with full window to get exact score.
             if s > alpha && NODE::PV {
                 -search::<PV>(td, -beta, -alpha, depth - 1 + extension, ply + 1)
             } else {
@@ -391,6 +449,7 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
             return Score::ZERO;
         }
 
+        // At root, track per-move node counts and update the root move table.
         if NODE::ROOT {
             let current_nodes = td.nodes();
             let rm = td.root_moves.iter_mut().find(|v| v.mv == mv).unwrap();
@@ -420,6 +479,8 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
                 }
 
                 if score >= beta {
+                    // Beta cutoff: this move is too good — the opponent won't allow this line.
+                    // Record as a lower bound and break; remaining moves don't need to be searched.
                     bound = Bound::Lower;
                     break;
                 }
@@ -437,10 +498,15 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         }
     }
 
+    // No legal moves: either checkmate or stalemate.
     if move_count == 0 {
         return if td.board.in_check() { mated_in(ply) } else { draw(td) };
     }
 
+    // History update: reward the move that caused a beta cutoff, penalize the moves that didn't.
+    // This teaches the engine to try similar moves earlier in future searches.
+    // The bonus/malus scale linearly with depth; earlier moves in the tried list get full malus,
+    // later moves get a scaled-down penalty (they had less chance to cause a cutoff).
     if best_move.is_present() {
         let stm = td.board.side_to_move();
         let quiet_bonus = (185 * depth).min(1648);
@@ -480,10 +546,13 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
         }
     }
 
+    // Store result in the transposition table for future lookups.
     if !(NODE::ROOT && td.pv_index > 0) {
         td.shared.tt.write(hash, depth, raw_eval, best_score, bound, best_move, ply, tt_pv, NODE::PV);
     }
 
+    // Update correction history: track how far the static eval deviated from the search result.
+    // This lets future calls to eval_correction() adjust the raw NNUE score more accurately.
     if !td.board.in_check() && is_valid(raw_eval) {
         let eval = correct_eval(raw_eval, correction_value, td.board.halfmove_clock());
         let skip_update = best_move.is_noisy()
@@ -497,6 +566,12 @@ fn search<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, mut beta: i32, mu
     best_score
 }
 
+// Quiescence search: called when depth reaches 0.
+// Continues searching captures (and checks when in check) until the position is "quiet".
+// This prevents the horizon effect — mistakenly evaluating a position mid-capture sequence.
+//
+// Stand-pat: the static eval is used as a lower bound. If it already exceeds beta, we assume
+// we can stop early. This reflects the assumption that we're not forced to capture.
 fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: isize) -> i32 {
     debug_assert!(!NODE::ROOT);
 
@@ -543,6 +618,7 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
     let mut best_score;
 
     if in_check {
+        // When in check, stand-pat is not available — we must search all evasions.
         raw_eval = Score::NONE;
         best_score = -Score::INFINITE;
     } else {
@@ -563,6 +639,7 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
 
     let mut best_move = Move::NULL;
     let mut move_count = 0;
+    // In qsearch the move picker only yields captures (and all moves when in check).
     let mut move_picker = MovePicker::new_qsearch();
 
     while let Some(mv) = move_picker.next::<NODE>(td, !in_check, ply) {
@@ -590,6 +667,7 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
         }
     }
 
+    // No legal moves while in check means checkmate.
     if in_check && move_count == 0 {
         return mated_in(ply);
     }
@@ -600,6 +678,9 @@ fn qsearch<NODE: NodeType>(td: &mut ThreadData, mut alpha: i32, beta: i32, ply: 
     best_score
 }
 
+// Correction history: adjusts the raw NNUE score based on observed prediction errors.
+// Indexed by pawn structure, white non-pawn material, and black non-pawn material —
+// these are proxies for position type that tend to be where static eval is consistently off.
 fn eval_correction(td: &ThreadData, ply: isize) -> i32 {
     let stm = td.board.side_to_move();
     let bucket = td.board.halfmove_clock_bucket();
@@ -622,6 +703,9 @@ fn update_correction_histories(td: &mut ThreadData, depth: i32, diff: i32, ply: 
     corrhist.non_pawn[crate::types::Color::Black].update(stm, td.board.non_pawn_key(crate::types::Color::Black), bucket, bonus);
 }
 
+// Continuation history: history indexed by the move made at a prior ply.
+// Looks back 1, 2, 4, and 6 plies — these offsets capture: the immediate reply,
+// the move that set up this position, and longer-range patterns.
 fn update_continuation_histories(td: &mut ThreadData, ply: isize, piece: crate::types::Piece, sq: crate::types::Square, bonus: i32) {
     for offset in [1isize, 2, 4, 6] {
         if ply >= offset {
@@ -644,7 +728,7 @@ fn make_move(td: &mut ThreadData, ply: isize, mv: Move) {
     td.shared.nodes.increment(td.id);
     td.network.push();
     td.board.make_move(mv, &mut td.network);
-    td.shared.tt.prefetch(td.board.hash());
+    td.shared.tt.prefetch(td.board.hash()); // Prefetch TT entry for the new position while the CPU does other work
 }
 
 fn undo_move(td: &mut ThreadData, mv: Move) {
