@@ -108,8 +108,7 @@ Replaces PeSTO with a learned NNUE. The search stack is identical to v2.4.
 - Output bucket selected by piece count (4 bands over 2–32 pieces), letting the net specialize for different game phases
 - Activation: Clipped ReLU in [0, 1]; weights quantized to i16 (first layer) and i8 (output)
 - Forward pass uses AVX2 SIMD intrinsics; falls back to scalar on unsupported hardware
-- Trained with [Bullet](https://github.com/jnlt3/bullet) on UHO positions annotated by Stockfish, with a nudging phase on lc0 game outcomes to correct positional biases
-
+- Trained with [Bullet](https://github.com/jnlt3/bullet) on UHO positions annotated by Stockfish.
 > Experimental NNUE variants were explored on branches `v3.1-512-hidden`, `v3.2-768-hidden`, `v3.3-1024-hidden`, `v3.4-1024-nudge`. The net on `v3-test` is the strongest found across those experiments.
 
 <details>
